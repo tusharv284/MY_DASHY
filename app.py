@@ -1,238 +1,93 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import plotly.express as px
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import silhouette_score
 
 # ── Page Config ──────────────────────────────────────────────────
-st.set_page_config(
-    layout="wide",
-    page_title="Lenskart Site Intelligence",
-    page_icon="👓"
-)
+st.set_page_config(layout="wide", page_title="ReactDash Analytics", page_icon="🔵")
 
-# ── Dark Theme CSS ────────────────────────────────────────────────
+# ── CSS for ReactDash Style ───────────────────────────────────────
 st.markdown("""
 <style>
-.stApp { background-color: #0f0f0f; }
-section[data-testid="stSidebar"] { background-color: #1a1a1a; }
-div[data-testid="stMetric"] {
-    background: #1a1a1a;
-    border-radius: 12px;
-    padding: 16px;
-    border: 1px solid #2a2a2a;
+.stApp { 
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
 }
-h1, h2, h3, h4, p, label { color: #f0f0f0 !important; }
-div[data-testid="stDataFrame"] { background: #1a1a1a; }
+.stMetric > label { color: #94a3b8 !important; font-size: 12px; }
+.stMetric > div > div:last-child { color: #f1f5f9 !important; }
+section[data-testid="stSidebar"] { 
+    background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+}
+.stPlotlyChart { border-radius: 12px; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Load Data from GitHub ─────────────────────────────────────────
+# ── Load Data ────────────────────────────────────────────────────
 @st.cache_data
 def load_data():
-    url = "https://raw.githubusercontent.com/tusharv284/my_dashy/main/lenskart_synthetic_data.csv"
-    try:
-        df = pd.read_csv(url)
-        return df
-    except Exception as e:
-        st.error(f"❌ Could not load data. Check your GitHub URL. Error: {e}")
-        st.stop()
+    np.random.seed(42)
+    n = 500
+    df = pd.DataFrame({
+        "Firm_ID": [f"F{i:03d}" for i in range(1, n+1)],
+        "Sys_Integration_Issue": np.random.choice([0,1,2,3,4,5], n, p=[0.05,0.1,0.2,0.3,0.2,0.15]),
+        "Manual_Errors": np.random.choice([0,1,2,3], n, p=[0.3,0.3,0.25,0.15]),
+        "RealTime_Insights": np.random.choice([0,1], n, p=[0.6,0.4]),
+        "Annual_Revenue_K": np.random.lognormal(6, 1.2, n).clip(50, 1000),
+        "Scalability_Score": np.random.normal(50, 15, n).clip(10, 100),
+        "Employee_Count": np.random.choice([10,25,50,100,250,500], n, p=[0.3,0.25,0.2,0.15,0.07,0.03]),
+        "Region": np.random.choice(["Dubai","Abu Dhabi","Sharjah","Ajman","RAK"], n),
+        "Cluster": np.random.choice(["Strugglers","Satisfied","Scalers"], n, p=[0.35,0.25,0.4])
+    })
+    # Target variable
+    df["Adoption_Interest"] = (
+        (df["Sys_Integration_Issue"] > 2) * 0.4 +
+        (df["Manual_Errors"] > 1) * 0.3 +
+        (df["Annual_Revenue_K"] > 200) * 0.2 +
+        np.random.normal(0, 0.1, n)
+    ).clip(0,1).round()
+    return df
 
 df = load_data()
 
-# ── Sidebar ───────────────────────────────────────────────────────
-st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/thumb/6/6b/Lenskart_Logo.svg/320px-Lenskart_Logo.svg.png", width=160)
-st.sidebar.markdown("---")
-st.sidebar.title("⚙️ Score Weights")
+# ── Train Models ─────────────────────────────────────────────────
+@st.cache_resource
+def train_models(df):
+    le = LabelEncoder()
+    df_ml = df.copy()
+    df_ml["Region_Enc"] = le.fit_transform(df_ml["Region"])
+    df_ml["Cluster_Enc"] = le.fit_transform(df_ml["Cluster"])
+    
+    # RF Classification
+    features = ["Sys_Integration_Issue","Manual_Errors","Annual_Revenue_K",
+                "Scalability_Score","Employee_Count","Region_Enc"]
+    rf = RandomForestClassifier(n_estimators=100, random_state=42)
+    rf.fit(df_ml[features], df_ml["Adoption_Interest"])
+    
+    # KMeans Clustering
+    kmeans = KMeans(n_clusters=3, random_state=42)
+    cluster_features = ["Sys_Integration_Issue","Annual_Revenue_K","Scalability_Score"]
+    kmeans.fit(df_ml[cluster_features])
+    
+    return rf, kmeans
 
-w_foot = st.sidebar.slider("Footfall Weight",       0.0, 1.0, 0.30, 0.05)
-w_demo = st.sidebar.slider("Demographics Weight",   0.0, 1.0, 0.25, 0.05)
-w_comp = st.sidebar.slider("Competitor Gap Weight", 0.0, 1.0, 0.20, 0.05)
-w_rent = st.sidebar.slider("Rent Penalty",          0.0, 1.0, 0.15, 0.05)
-w_poi  = st.sidebar.slider("POI Score Weight",      0.0, 1.0, 0.10, 0.05)
+rf_model, kmeans_model = train_models(df)
 
-st.sidebar.markdown("---")
-st.sidebar.title("🔍 Filters")
+# ── HEADER ───────────────────────────────────────────────────────
+st.markdown("""
+<div style='background: linear-gradient(90deg, #1e40af 0%, #3b82f6 100%); 
+            padding: 15px; border-radius: 12px; margin-bottom: 20px;'>
+    <h1 style='color: white; margin: 0; font-size: 28px;'>🔵 UAE E-Commerce Analytics Dashboard</h1>
+    <p style='color: #bfdbfe; margin: 5px 0 0 0;'>Classification | Clustering | Association Rules | Regression</p>
+</div>
+""", unsafe_allow_html=True)
 
-zone_options = df["Zone_Type"].unique().tolist()
-zone_filter = st.sidebar.multiselect("Zone Type", zone_options, default=zone_options)
-
-parking_filter = st.sidebar.checkbox("Parking Available Only", value=False)
-metro_max = st.sidebar.slider("Max Metro Distance (km)", 0.5, 4.5, 4.5, 0.5)
-
-# ── Apply Filters ─────────────────────────────────────────────────
-df_f = df[df["Zone_Type"].isin(zone_filter)].copy()
-if parking_filter:
-    df_f = df_f[df_f["Parking_Available"] == True]
-df_f = df_f[df_f["Metro_Proximity_Km"] <= metro_max]
-
-# ── Recompute Composite Score ─────────────────────────────────────
-df_f["Composite"] = (
-    df_f["Footfall_Score"] * w_foot +
-    df_f["Demo_Score"]     * w_demo +
-    df_f["Competitor_Gap"] * w_comp -
-    df_f["Rent_Index"]     * w_rent +
-    df_f["POI_Score"]      * w_poi
-).round(1)
-
-# ── Aggregate by Locality ─────────────────────────────────────────
-summary = (
-    df_f.groupby("Locality").agg(
-        Composite           = ("Composite",           "mean"),
-        Monthly_Revenue_AED = ("Monthly_Revenue_AED", "mean"),
-        ROI_Score           = ("ROI_Score",           "mean"),
-        Footfall_Score      = ("Footfall_Score",      "mean"),
-        Competitor_Gap      = ("Competitor_Gap",      "mean"),
-        Demo_Score          = ("Demo_Score",          "mean"),
-        Rent_Index          = ("Rent_Index",          "mean"),
-        POI_Score           = ("POI_Score",           "mean"),
-        Daily_Footfall      = ("Daily_Footfall",      "mean"),
-        Avg_Spend_AED       = ("Avg_Spend_AED",       "mean"),
-        Recommended         = ("Recommended",         "mean"),
-    )
-    .reset_index()
-    .sort_values("Composite", ascending=False)
-    .round(1)
-)
-
-top3 = summary.head(3)
-
-# ── Header ────────────────────────────────────────────────────────
-st.title("👓 Lenskart Dubai — Outlet Site Intelligence")
-st.caption(f"Analysing {len(df_f)} records across {summary.shape[0]} localities · Adjust sidebar to re-rank in real time")
-st.markdown("---")
-
-# ── Row 1: KPI Cards ──────────────────────────────────────────────
-st.subheader("🏆 Top 3 Recommended Localities")
-c1, c2, c3 = st.columns(3)
-medals = ["🥇", "🥈", "🥉"]
-for col, medal, (_, row) in zip([c1, c2, c3], medals, top3.iterrows()):
-    with col:
-        st.metric(
-            label=f"{medal} {row['Locality']}",
-            value=f"Score: {row['Composite']:.1f}",
-            delta=f"ROI: {row['ROI_Score']:.1f}x | AED {row['Monthly_Revenue_AED']:,.0f}/mo"
-        )
-
-st.markdown("---")
-
-# ── Row 2: Bar Chart + Radar ──────────────────────────────────────
-col_left, col_right = st.columns([1.6, 1])
-
-with col_left:
-    st.subheader("📊 Locality Rankings — Composite Score")
-    bar_data = summary.head(12).sort_values("Composite")
-    colors = ["#00c9a7" if r < 3 else "#457B9D" for r in range(len(bar_data)-1, -1, -1)]
-    fig_bar = go.Figure(go.Bar(
-        x=bar_data["Composite"],
-        y=bar_data["Locality"],
-        orientation='h',
-        marker_color=colors,
-        text=bar_data["Composite"],
-        textposition="outside"
-    ))
-    fig_bar.update_layout(
-        paper_bgcolor="#1a1a1a", plot_bgcolor="#1a1a1a",
-        font_color="white", height=420,
-        xaxis=dict(title="Composite Score", gridcolor="#2a2a2a"),
-        yaxis=dict(title=""),
-        margin=dict(l=10, r=40, t=20, b=40)
-    )
-    st.plotly_chart(fig_bar, use_container_width=True)
-
-with col_right:
-    st.subheader("🎯 Top 3 Factor Breakdown")
-    cats   = ["Footfall_Score", "Demo_Score", "Competitor_Gap", "POI_Score", "Rent_Index"]
-    labels = ["Footfall", "Demographics", "Comp Gap", "POI", "Rent"]
-    radar_colors = ["#00c9a7", "#457B9D", "#E63946"]
-    fig_r = go.Figure()
-    for i, (_, row) in enumerate(top3.iterrows()):
-        vals = [row[c] for c in cats] + [row[cats[0]]]
-        fig_r.add_trace(go.Scatterpolar(
-            r=vals, theta=labels + [labels[0]],
-            fill='toself', name=row['Locality'],
-            line_color=radar_colors[i]
-        ))
-    fig_r.update_layout(
-        polar=dict(
-            bgcolor="#1a1a1a",
-            radialaxis=dict(visible=True, range=[0, 100], gridcolor="#2a2a2a"),
-            angularaxis=dict(gridcolor="#2a2a2a")
-        ),
-        paper_bgcolor="#1a1a1a", font_color="white",
-        legend=dict(orientation="h", y=-0.15, x=0.5, xanchor="center"),
-        height=420, margin=dict(l=30, r=30, t=20, b=60)
-    )
-    st.plotly_chart(fig_r, use_container_width=True)
-
-st.markdown("---")
-
-# ── Row 3: Scatter + Revenue Bar ─────────────────────────────────
-col_a, col_b = st.columns(2)
-
-with col_a:
-    st.subheader("🗺️ Opportunity Map")
-    st.caption("Top-right = High footfall + Low competition (sweet spot)")
-    fig_s = px.scatter(
-        summary, x="Footfall_Score", y="Competitor_Gap",
-        size="Composite", color="ROI_Score",
-        text="Locality", hover_name="Locality",
-        hover_data={"Monthly_Revenue_AED": True, "Composite": True},
-        color_continuous_scale="RdYlGn", size_max=45
-    )
-    fig_s.update_traces(textposition="top center")
-    fig_s.update_layout(
-        paper_bgcolor="#1a1a1a", plot_bgcolor="#1a1a1a",
-        font_color="white", height=400,
-        xaxis=dict(title="Footfall Score", gridcolor="#2a2a2a"),
-        yaxis=dict(title="Competitor Gap", gridcolor="#2a2a2a"),
-        margin=dict(l=10, r=10, t=20, b=40)
-    )
-    st.plotly_chart(fig_s, use_container_width=True)
-
-with col_b:
-    st.subheader("💰 Monthly Revenue Potential")
-    rev_data = summary.sort_values("Monthly_Revenue_AED", ascending=False).head(10)
-    fig_rev = px.bar(
-        rev_data, x="Locality", y="Monthly_Revenue_AED",
-        color="ROI_Score", color_continuous_scale="Teal",
-        text=rev_data["Monthly_Revenue_AED"].apply(lambda x: f"AED {x/1e6:.1f}M")
-    )
-    fig_rev.update_traces(textposition="outside")
-    fig_rev.update_layout(
-        paper_bgcolor="#1a1a1a", plot_bgcolor="#1a1a1a",
-        font_color="white", height=400,
-        xaxis=dict(title="", tickangle=-30, gridcolor="#2a2a2a"),
-        yaxis=dict(title="Monthly Revenue (AED)", gridcolor="#2a2a2a"),
-        margin=dict(l=10, r=10, t=20, b=80)
-    )
-    st.plotly_chart(fig_rev, use_container_width=True)
-
-st.markdown("---")
-
-# ── Row 4: Full Data Table ────────────────────────────────────────
-st.subheader("📋 Full Locality Report")
-display_cols = {
-    "Locality": "Locality",
-    "Composite": "Score",
-    "Monthly_Revenue_AED": "Revenue/mo (AED)",
-    "ROI_Score": "ROI",
-    "Footfall_Score": "Footfall",
-    "Demo_Score": "Demographics",
-    "Competitor_Gap": "Comp Gap",
-    "Rent_Index": "Rent Index",
-    "Daily_Footfall": "Daily Footfall"
-}
-table_df = summary[list(display_cols.keys())].rename(columns=display_cols)
-st.dataframe(
-    table_df.style.background_gradient(cmap="Greens", subset=["Score"])
-                  .background_gradient(cmap="RdYlGn", subset=["ROI"])
-                  .format({"Revenue/mo (AED)": "{:,.0f}", "ROI": "{:.1f}x",
-                           "Daily Footfall": "{:,.0f}"}),
-    use_container_width=True,
-    height=420
-)
-
-# ── Footer ────────────────────────────────────────────────────────
-st.markdown("---")
-st.caption("📍 Lenskart Dubai Site Intelligence Dashboard · Built with Streamlit & Plotly · Data: Synthetic")
+# ── SIDEBAR ─────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("""
+    <div style='padding: 20px; text-align: center;'>
+        <div style='width: 60px; height
